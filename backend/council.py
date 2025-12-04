@@ -1,8 +1,11 @@
 """3-stage LLM Council orchestration."""
 
 from typing import List, Dict, Any, Tuple
-from .openrouter import query_models_parallel, query_model
+import logging
+from .cli_adapter import query_models_parallel, query_model
 from .config import COUNCIL_MODELS, CHAIRMAN_MODEL
+
+logger = logging.getLogger("llm_council.council")
 
 
 async def stage1_collect_responses(user_query: str) -> List[Dict[str, Any]]:
@@ -265,6 +268,7 @@ async def generate_conversation_title(user_query: str) -> str:
     Returns:
         A short title (3-5 words)
     """
+    logger.info("Title generation start")
     title_prompt = f"""Generate a very short title (3-5 words maximum) that summarizes the following question.
 The title should be concise and descriptive. Do not use quotes or punctuation in the title.
 
@@ -274,10 +278,11 @@ Title:"""
 
     messages = [{"role": "user", "content": title_prompt}]
 
-    # Use gemini-2.5-flash for title generation (fast and cheap)
-    response = await query_model("google/gemini-2.5-flash", messages, timeout=30.0)
+    # Use a fast, inexpensive model for title generation (via Codex)
+    response = await query_model("codex:gpt-5.1-codex-mini", messages, timeout=30.0)
 
     if response is None:
+        logger.warning("Title generation failed, falling back to default")
         # Fallback to a generic title
         return "New Conversation"
 
@@ -290,6 +295,7 @@ Title:"""
     if len(title) > 50:
         title = title[:47] + "..."
 
+    logger.info("Title generation done: %s", title)
     return title
 
 
@@ -303,8 +309,10 @@ async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
     Returns:
         Tuple of (stage1_results, stage2_results, stage3_result, metadata)
     """
+    logger.info("Stage1: collect_responses start")
     # Stage 1: Collect individual responses
     stage1_results = await stage1_collect_responses(user_query)
+    logger.info("Stage1: done, %d responses", len(stage1_results))
 
     # If no models responded successfully, return error
     if not stage1_results:
@@ -313,18 +321,22 @@ async def run_full_council(user_query: str) -> Tuple[List, List, Dict, Dict]:
             "response": "All models failed to respond. Please try again."
         }, {}
 
+    logger.info("Stage2: collect_rankings start")
     # Stage 2: Collect rankings
     stage2_results, label_to_model = await stage2_collect_rankings(user_query, stage1_results)
+    logger.info("Stage2: done, %d rankings", len(stage2_results))
 
     # Calculate aggregate rankings
     aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
 
+    logger.info("Stage3: synthesize_final start")
     # Stage 3: Synthesize final answer
     stage3_result = await stage3_synthesize_final(
         user_query,
         stage1_results,
         stage2_results
     )
+    logger.info("Stage3: synthesize_final done")
 
     # Prepare metadata
     metadata = {
