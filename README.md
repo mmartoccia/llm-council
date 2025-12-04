@@ -2,7 +2,9 @@
 
 ![llmcouncil](header.jpg)
 
-The idea of this repo is that instead of asking a question to your favorite LLM provider (e.g. OpenAI GPT 5.1, Google Gemini 3.0 Pro, Anthropic Claude Sonnet 4.5, xAI Grok 4, eg.c), you can group them into your "LLM Council". This repo is a simple, local web app that essentially looks like ChatGPT except it uses OpenRouter to send your query to multiple LLMs, it then asks them to review and rank each other's work, and finally a Chairman LLM produces the final response.
+The idea of this repo is that instead of asking a question to your favorite LLM provider (e.g. OpenAI GPT 5.1, Google Gemini 3.0 Pro, Anthropic Claude Sonnet 4.5, xAI Grok 4, etc.), you can group them into your "LLM Council". This repo is a simple, local web app that essentially looks like ChatGPT except it uses **local CLI tools** from each provider to send your query to multiple LLMs. The LLMs then review and rank each other's work, and finally a Chairman LLM produces the final response.
+
+**This fork has been modified** to use subscription-based CLI tools (Codex, Claude, Gemini, Grok) instead of the original OpenRouter API approach, eliminating per-token API costs.
 
 In a bit more detail, here is what happens when you submit a query:
 
@@ -16,9 +18,28 @@ This project was 99% vibe coded as a fun Saturday hack because I wanted to explo
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Install CLI Tools
 
-The project uses [uv](https://docs.astral.sh/uv/) for project management.
+This project requires the following CLI tools to be installed and authenticated:
+
+- **Codex CLI** (for OpenAI models): [Installation docs](https://docs.codex.xyz/installation)
+- **Claude CLI** (for Anthropic models): [Installation docs](https://docs.anthropic.com/claude/docs/claude-cli)
+- **Gemini CLI** (for Google models): [Installation docs](https://ai.google.dev/gemini-api/docs/cli)
+- **Grok One-Shot CLI** (for xAI models): Install via npm:
+  ```bash
+  npm install -g @xagent/one-shot
+  ```
+
+**Authentication:**
+
+- **Codex**: Run `codex` and follow login prompts
+- **Claude**: Configure via `~/.config/claude/config.json` or run `claude` for setup
+- **Gemini**: Run `gemini` and follow authentication flow
+- **Grok**: Set your X API key (see step 2 below)
+
+### 2. Install Project Dependencies
+
+The project uses [uv](https://docs.astral.sh/uv/) for Python dependency management.
 
 **Backend:**
 ```bash
@@ -32,30 +53,53 @@ npm install
 cd ..
 ```
 
-### 2. Configure API Key
+### 3. Configure Environment Variables
 
 Create a `.env` file in the project root:
 
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-...
+# Grok / xAI API key (get from https://console.x.ai)
+GROK_API_KEY=xai-...
+X_API_KEY=xai-...
+XAI_API_KEY=xai-...
+
+# Optional: Override CLI tool paths if not in standard locations
+# CODEX_CLI=codex
+# CLAUDE_CLI=claude
+# GEMINI_CLI=gemini
+# GROK_CLI=grok
 ```
 
-Get your API key at [openrouter.ai](https://openrouter.ai/). Make sure to purchase the credits you need, or sign up for automatic top up.
+**Note:** Codex, Claude, and Gemini CLIs manage their own authentication separately. Only Grok requires an API key in `.env`.
 
-### 3. Configure Models (Optional)
+### 4. Configure Models (Optional)
 
-Edit `backend/config.py` to customize the council:
+Edit `backend/config.py` to customize the council. Models use the `provider:model_id` convention:
 
 ```python
 COUNCIL_MODELS = [
-    "openai/gpt-5.1",
-    "google/gemini-3-pro-preview",
-    "anthropic/claude-sonnet-4.5",
-    "x-ai/grok-4",
+    # Codex / OpenAI models
+    "codex:gpt-5.1-codex",
+    "codex:gpt-5.1-codex-mini",
+
+    # Claude (Anthropic)
+    "claude:claude-sonnet-4-20250514",
+
+    # Gemini (Google)
+    "gemini:gemini-2.5-pro",
+
+    # Grok (xAI)
+    "grok:grok-4",
 ]
 
-CHAIRMAN_MODEL = "google/gemini-3-pro-preview"
+CHAIRMAN_MODEL = "codex:gpt-5.1-codex"
 ```
+
+**Model naming conventions:**
+- `codex:<openai-model-name>` - any OpenAI model accessible via Codex CLI
+- `claude:<anthropic-model-name>` - any Claude model (use full dated identifiers)
+- `gemini:<google-model-name>` - any Gemini model
+- `grok:<xai-model-name>` - any Grok model (e.g., `grok-4`, `grok-4.1`)
 
 ## Running the Application
 
@@ -81,7 +125,29 @@ Then open http://localhost:5173 in your browser.
 
 ## Tech Stack
 
-- **Backend:** FastAPI (Python 3.10+), async httpx, OpenRouter API
+- **Backend:** FastAPI (Python 3.10+), async subprocess calls to CLI tools
+- **LLM Integration:** Codex CLI, Claude CLI, Gemini CLI, Grok One-Shot CLI
 - **Frontend:** React + Vite, react-markdown for rendering
 - **Storage:** JSON files in `data/conversations/`
 - **Package Management:** uv for Python, npm for JavaScript
+
+## Architecture Changes from Original
+
+This fork replaces the OpenRouter HTTP API with direct CLI tool invocations:
+
+- **Original:** `backend/openrouter.py` using `httpx` to call OpenRouter API
+- **This fork:** `backend/cli_adapter.py` using `asyncio.create_subprocess_exec` to shell out to:
+  - `codex exec "<prompt>" -m <model> --json`
+  - `claude --print --output-format json --model <model> "<prompt>"`
+  - `gemini -p "<prompt>" -m <model>`
+  - `grok -p "<prompt>" -m <model> -q`
+
+**Benefits:**
+- No per-token API costs (uses subscription-based CLI access)
+- Direct integration with provider CLIs
+- Easier credential management (CLIs handle their own auth)
+
+**Trade-offs:**
+- Requires installing and authenticating 4 separate CLI tools
+- CLI output parsing can be less standardized than API responses
+- Subprocess overhead vs. direct HTTP calls
