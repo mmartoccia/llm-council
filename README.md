@@ -1,4 +1,4 @@
-# LLM Council
+# LLM Council (CLI Version)
 
 ![llmcouncil](header.jpg)
 
